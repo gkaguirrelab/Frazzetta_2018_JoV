@@ -34,15 +34,9 @@ cameraDistanceMM = 60;
 eyeRadiusPX = eyeRadiusMM/pixelSizeMM(1);
 sceneDistancePX = cameraDistanceMM/pixelSizeMM(1);
 
-
 % define azimuth and elevation timeseries
-% Define the range of azimuth and elevation steps 
-% eleSteps = -20:5:20;
-% aziSweeps = -30:3:30;
-
-% shorter version
-eleSteps = [-10:10:10];
-aziSweeps = [-20:20:20];
+eleSteps = [-15:5:15];
+aziSweeps = [-25:5:25];
 
 allPupilAzi=[];
 allPupilEle=[];
@@ -67,15 +61,15 @@ eyeClosedness = 0*ones(1,length(pupilXpos));
 
 
 %% generate eye movie
-generateEyeMovie(codeDirectory,exportsDirectory,pupilXpos, pupilYpos, pupilZpos, pupilRadiusMM, eyeClosedness,cameraDistanceMM)
+generateEyeMovie(codeDirectory, exportsDirectory, pupilXpos, pupilYpos, pupilZpos, pupilRadiusMM, eyeClosedness, cameraDistanceMM)
 
 % rename file
 movefile(fullfile(exportsDirectory,'pupil_movie.avi'),fullfile(exportsDirectory,[pathParams.runName '_gray.avi']));
 
-%% Perform the analysis with one call
+%% Run the processing pipeline
 runVideoPipeline( pathParams, ...
     'verbosity', 'full', 'useParallel',false, 'catchErrors', false,...
-    'pupilFrameMask', [60 60], 'maskBox', [0.9 0.9], 'pupilGammaCorrection',0.7, 'pupilRange', [10 60], ...
+    'maskBox', [0.9 0.9], ...
     'overwriteControlFile',true, 'glintPatchRadius', 10,  ...
     'projectionModel', 'pseudoPerspective', ...
     'ellipseTransparentLB',[0,0, 20, 0, 0],...
@@ -86,10 +80,16 @@ runVideoPipeline( pathParams, ...
     'sceneGeometryLB',[0,  0, sceneDistancePX+eyeRadiusPX, 100],'sceneGeometryUB',[sceneResolution(1),  sceneResolution(2), sceneDistancePX+eyeRadiusPX, 500],...
     'skipStageByNumber',1);
 
-
-%% use the inverse projection function and the scene geometry to recover the angles
+% Load the result files into memory
 load(fullfile(pathParams.dataOutputDirFull,[pathParams.runName '_pupil.mat']));
 load(fullfile(pathParams.dataOutputDirFull,[pathParams.runName '_sceneGeometry.mat']));
+
+%% Report how closely we have reconstructed the actual scene geometry
+fprintf('Veridical scene geometry - eye center: [%0.1f, %0.1f, %0.1f], eye radius: %0.1f \n',sceneResolution(1)/2,  sceneResolution(2)/2, sceneDistancePX+eyeRadiusPX, eyeRadiusPX);
+fprintf('Estimated scene geometry - eye center: [%0.1f, %0.1f, %0.1f], eye radius: %0.1f \n',sceneGeometry.eyeCenter.X, sceneGeometry.eyeCenter.Y, sceneGeometry.eyeCenter.Z, sceneGeometry.eyeRadius);
+
+%% use the inverse projection function and the scene geometry to recover the angles
+
 reconstructedPupilAzi =[];
 reconstructedPupilEle = [];
 
