@@ -17,22 +17,38 @@ if exist(exportsDirectory,'dir')==0
     mkdir(exportsDirectory);
 end
 
-
-% features of the camera for the demo (standard blender camera)
 sensorSize = [36 24]; %mm
 aperture = 2.0;
+fieldOfViewDEG = 45;
 sceneResolution = [640 480];
-focalLength = (sceneResolution(1)/aperture) / tand(45);
+focalLengthPX = (sceneResolution(1)/2) / tand(45); % this is how it is defined in blender, but I am not sure it is right
+focalLengthMM = 18;
+focalLengthPX = (sceneResolution(2)/2) / tand(45); % this is the focal length that works
 
 pixelSizeMM = sensorSize./sceneResolution;
 
 
-% eye radius and camera distance (hardcoded in the python function)
-eyeRadiusMM = 14;
-cameraDistanceMM = 60;
+% We find that objects in the image are 25% larger (in pixels) than what we
+% would calculate here. For now, we apply this fudge factor while we try to
+% understand how to calculate pixel size correctly.
+fudgeFactor = 1.2;
+pixelSizeMM = pixelSizeMM ./ fudgeFactor;
 
+
+
+% eye radius (hardcoded in the python function)
+eyeRadiusMM = 14;
 eyeRadiusPX = eyeRadiusMM/pixelSizeMM(1);
-sceneDistancePX = cameraDistanceMM/pixelSizeMM(1);
+
+% The camera distance is the distance of the camera from the center of
+% rotation of the eye.
+cameraDistanceMM = 50;
+
+% The camera is hard-coded in the python routine to focus upon (i.e.,
+% target) the front of the center of the eye. Therefore, the scene distance
+% is equal to the camera distance + the eye raidus. We compute the scene
+% distance in mm and then convert to pixels here.
+sceneDistancePX = (cameraDistanceMM+eyeRadiusMM)/pixelSizeMM(1);
 
 % define azimuth and elevation timeseries
 eleSteps = [-15:5:15];
@@ -49,19 +65,42 @@ for ii = 1: length(eleSteps)
     end
 end
 
-rotationArm = abs(eyeRadiusMM);
-% pupil position based on the angles (eye target)
-pupilXpos = (rotationArm).*sind(allPupilAzi).*cosd(allPupilEle);
-pupilYpos = (rotationArm).*sind(allPupilEle);
-pupilZpos =-(rotationArm).*cosd(allPupilAzi).*cosd(allPupilEle);
+allPupilAzi=[];
+allPupilEle=[];
+for ii = 1: length(eleSteps)
+    allPupilEle = [allPupilEle eleSteps(ii)*ones(1,length(aziSweeps))];
+    if mod(ii,2)
+        allPupilAzi = [allPupilAzi aziSweeps];
+    else
+        allPupilAzi = [allPupilAzi fliplr(aziSweeps)];
+    end
+end
 
-pupilRadiusMM = 2*ones(1,length(pupilXpos));
+
+% The eye is posed in the Blender model by defining the location in XYZ
+% coordinate space of an eye target. The coordinate system that we use in
+% the transparentTrack routines has the convention X = left/right; Y =
+% down/up; Z = nearer / farther. The subsequent python routine transposes
+% some of these dimensions to be appropriate for the Blender coordinate
+% convention, but this need not concern us here.
+%
+% We calculate the target of the gaze using equations that describe the
+% Fick axis rotation of the eye. In this system, the Y (down / up) position
+% of the center of the pupil is indenpendent of the azimuthal rotation. The
+% gazeTargetPositions that we generate correspond to a point that is
+% directly on the surface of the eye in the center of the pupil.
+gazeTargetPositionX = (eyeRadiusMM).*sind(allPupilAzi).*cosd(allPupilEle);
+gazeTargetPositionY = (eyeRadiusMM).*sind(allPupilEle);
+gazeTargetPositionZ = -(eyeRadiusMM).*cosd(allPupilAzi).*cosd(allPupilEle);
+
+% Define the pupil radius in pixels and the degree of eye closedness
+pupilRadiusMM = 2*ones(1,length(gazeTargetPositionX));
 pupilRadiusPX = pupilRadiusMM/pixelSizeMM(1);
-eyeClosedness = 0*ones(1,length(pupilXpos));
+eyeClosedness = 0*ones(1,length(gazeTargetPositionX));
 
 
 %% generate eye movie
-generateEyeMovie(codeDirectory, exportsDirectory, pupilXpos, pupilYpos, pupilZpos, pupilRadiusMM, eyeClosedness, cameraDistanceMM)
+generateEyeMovie(codeDirectory,exportsDirectory,gazeTargetPositionX, gazeTargetPositionY, gazeTargetPositionZ, pupilRadiusMM, eyeClosedness,cameraDistanceMM)
 
 % rename file
 movefile(fullfile(exportsDirectory,'pupil_movie.avi'),fullfile(exportsDirectory,[pathParams.runName '_gray.avi']));
@@ -69,15 +108,13 @@ movefile(fullfile(exportsDirectory,'pupil_movie.avi'),fullfile(exportsDirectory,
 %% Run the processing pipeline
 runVideoPipeline( pathParams, ...
     'verbosity', 'full', 'useParallel',false, 'catchErrors', false,...
-    'maskBox', [0.9 0.9], ...
-    'overwriteControlFile',true, 'glintPatchRadius', 10,  ...
-    'projectionModel', 'pseudoPerspective', ...
+    'pupilFrameMask', [60 60], 'maskBox', [0.9 0.9], 'pupilGammaCorrection',0.7, 'pupilRange', [30 80], ...
+    'overwriteControlFile',true, 'glintPatchRadius', 10, ...
     'ellipseTransparentLB',[0,0, 20, 0, 0],...
     'ellipseTransparentUB',[sceneResolution(1),sceneResolution(2), 20000, 1.0, pi],...
-    'candidateThetas',0:pi/16:2*pi,...
+    'candidateThetas',0:pi/16:2*pi,...    
     'badFrameErrorThreshold', 8, ...
-    'eyeRadius',eyeRadiusPX, 'cameraDistanceInPixels',sceneDistancePX, ...
-    'sceneGeometryLB',[0,  0, sceneDistancePX+eyeRadiusPX, 100],'sceneGeometryUB',[sceneResolution(1),  sceneResolution(2), sceneDistancePX+eyeRadiusPX, 500],...
+    'sceneGeometryLB',[0, 0, sceneDistancePX, 25],'sceneGeometryUB',[640, 480, sceneDistancePX, 500],...
     'skipStageByNumber',1);
 
 % Load the result files into memory
