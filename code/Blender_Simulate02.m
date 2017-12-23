@@ -131,62 +131,59 @@ fprintf('Estimated scene geometry - eye center: [%0.1f, %0.1f, %0.1f], eye radiu
 reconstructedPupilAzi =[];
 reconstructedPupilEle = [];
 
-for ii=1:size(pupilData.ellipseParamsAreaSmoothed_mean,1)
-    transparentEllipse = pupilData.ellipseParamsUnconstrained_mean(ii,:);
-    [reconstructedPupilAzi(ii), reconstructedPupilEle(ii), reconstructedPupilArea(ii)] = pupilProjection_inv(transparentEllipse, [sceneGeometry.eyeCenter.X sceneGeometry.eyeCenter.Y sceneGeometry.eyeCenter.Z], sceneGeometry.eyeRadius, sceneGeometry.meta.projectionModel);
+nPoints = size(pupilData.ellipseParamsAreaSmoothed_mean,1);
+
+for ii=1:nPoints
+    worldPoints(ii,1) = eyeRadiusPX*sind(allPupilAzi(ii))*cosd(allPupilEle(ii));
+    worldPoints(ii,2) = eyeRadiusPX*sind(allPupilEle(ii));
+    worldPoints(ii,3) = eyeRadiusPX*cosd(allPupilAzi(ii))*cosd(allPupilEle(ii));
+    
+    imagePoints(ii,1)=pupilData.ellipseParamsUnconstrained_mean(ii,1);
+    imagePoints(ii,2)=pupilData.ellipseParamsUnconstrained_mean(ii,2);
 end
 
-% plot real Azi,  Ele, and pupil area vs reconstructed ones
+worldPoints1=[worldPoints, ones(nPoints,1)];
+imagePoints1=[imagePoints, ones(nPoints,1)];
+
+intrinsicCameraMatrix = [focalLengthPX 0 sceneResolution(1)/2; 0 focalLengthPX sceneResolution(2)/2; 0 0 1];
+[extrinsicRotationMatrix, extrinsicTranslationVector, worldPointsReconstructed]=efficient_pnp_gauss(worldPoints1, imagePoints1, intrinsicCameraMatrix);
+
+
+%% NEXT STEP --
+% Create a set of 5, 3D world coordinate points that are on the border of a
+% pupil that is on a tilted plane for the azi / ele of the eye. Project
+% these to the image plane. Fit the 5 points with an ellipse (5 points
+% are needed to uniquely specify the ellipse). Identify the center of that
+% fitted ellipse. This is the predicted location of the projection of that
+% pupil in the image plane. Can also project the center of the circle and
+% see where that lands.
+
+
+
+% Reconstruct the points on the image plane
+
+
+
+projectionMatrix=intrinsicCameraMatrix*[extrinsicRotationMatrix,extrinsicTranslationVector];
+imagePointsReconstructedUnscaled=(projectionMatrix*worldPoints1')';
+
+imagePointsReconstructed=zeros(nPoints,2);
+imagePointsReconstructed(:,1)=imagePointsReconstructedUnscaled(:,1)./imagePointsReconstructedUnscaled(:,3);
+imagePointsReconstructed(:,2)=imagePointsReconstructedUnscaled(:,2)./imagePointsReconstructedUnscaled(:,3);
+
+
+
+reconstructionRMSE = sqrt(sum(sqrt((imagePointsReconstructed(:,1)-imagePoints(:,1)).^2 + (imagePointsReconstructed(:,2)-imagePoints(:,2)).^2)));
+
 figure
-subplot(1,2,1)
-plot(allPupilAzi,reconstructedPupilAzi, '.r')
-rl = refline(1,0);
-rl.Color = 'k';
-xlabel('Ground Truth Pupil Azimuth in degrees')
-ylabel('Reconstructed Pupil Azimuth in degrees')
-ylim([min([min(allPupilAzi) min(reconstructedPupilAzi)]) max([max(allPupilAzi) max(reconstructedPupilAzi)])]);
-xlim([min([min(allPupilAzi) min(reconstructedPupilAzi)]) max([max(allPupilAzi) max(reconstructedPupilAzi)])]);
-axis square
+plot(imagePoints(:,1),imagePoints(:,2),'o','MarkerEdgeColor',[.7 .7 .7],...
+    'MarkerFaceColor',[.7 .7 .7])
+hold on
+plot(imagePointsReconstructed(:,1),imagePointsReconstructed(:,2),'.r')
 
-subplot(1,2,2)
-plot(-allPupilEle,reconstructedPupilEle, '.r')
-rl = refline(1,0);
-rl.Color = 'k';
-xlabel('Ground Truth Pupil Elevation in degrees')
-ylabel('Reconstructed Pupil Elevation in degrees')
-ylim([min([min(allPupilAzi) min(reconstructedPupilAzi)]) max([max(allPupilAzi) max(reconstructedPupilAzi)])]);
-xlim([min([min(allPupilAzi) min(reconstructedPupilAzi)]) max([max(allPupilAzi) max(reconstructedPupilAzi)])]);
-axis square
-
-%% plot some fits
-
-temporalSupport = 0:1/60.:(size(pupilData.ellipseParamsSceneConstrained_mean,1)-1)/60; % seconds
-temporalSupport = temporalSupport / 60; % minutes
-
-% Make a plot of pupil area, both on the image plane and on the eye
 figure
-subplot(2,1,1)
-plot(temporalSupport,pupilData.ellipseParamsUnconstrained_mean(:,3),'-k','LineWidth',2);
+plot3(worldPoints(:,1),worldPoints(:,2),worldPoints(:,3),'o','MarkerEdgeColor',[.7 .7 .7],...
+    'MarkerFaceColor',[.7 .7 .7])
 hold on
-plot(temporalSupport,pupilData.ellipseParamsSceneConstrained_mean(:,3),'-b');
-plot(temporalSupport,pupilData.ellipseParamsSceneConstrained_mean(:,3)-pupilData.ellipseParamsSceneConstrained_splitsSD(:,3),'-','Color',[0 0 0.7])
-plot(temporalSupport,pupilData.ellipseParamsSceneConstrained_mean(:,3)+pupilData.ellipseParamsSceneConstrained_splitsSD(:,3),'-','Color',[0 0 0.7])
-plot(temporalSupport,pupilData.ellipseParamsAreaSmoothed_mean(:,3),'-r','LineWidth',2)
-xlim([0 max(temporalSupport)]);
-xlabel('time [mins]');
-ylabel('pupil area [pixels in plane]');
-hold off
-
-subplot(2,1,2)
-plot(temporalSupport,pupilData.meta.smoothPupilArea.pupilAreaMean,'-k');
-hold on
-plot(temporalSupport,pupilData.meta.smoothPupilArea.pupilAreaMean-pupilData.meta.smoothPupilArea.pupilAreaSD,'-','Color',[0 0 0.7])
-plot(temporalSupport,pupilData.meta.smoothPupilArea.pupilAreaMean+pupilData.meta.smoothPupilArea.pupilAreaSD,'-','Color',[0 0 0.7])
-plot(temporalSupport,pupilData.meta.smoothPupilArea.pupilAreaMean,'-r','LineWidth',2)
-xlim([0 max(temporalSupport)]);
-xlabel('time [mins]');
-ylabel('pupil area [pixels on eye]');
-hold off
-
-
+plot3(worldPointsReconstructed(:,1),worldPointsReconstructed(:,2),worldPointsReconstructed(:,3),'.r')
 
