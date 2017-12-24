@@ -66,16 +66,6 @@ for ii = 1: length(eleSteps)
     end
 end
 
-allPupilAzi=[];
-allPupilEle=[];
-for ii = 1: length(eleSteps)
-    allPupilEle = [allPupilEle eleSteps(ii)*ones(1,length(aziSweeps))];
-    if mod(ii,2)
-        allPupilAzi = [allPupilAzi aziSweeps];
-    else
-        allPupilAzi = [allPupilAzi fliplr(aziSweeps)];
-    end
-end
 
 
 % The eye is posed in the Blender model by defining the location in XYZ
@@ -146,7 +136,7 @@ worldPoints1=[worldPoints, ones(nPoints,1)];
 imagePoints1=[imagePoints, ones(nPoints,1)];
 
 intrinsicCameraMatrix = [focalLengthPX 0 sceneResolution(1)/2; 0 focalLengthPX sceneResolution(2)/2; 0 0 1];
-[extrinsicRotationMatrix, extrinsicTranslationVector, worldPointsReconstructed]=efficient_pnp_gauss(worldPoints1, imagePoints1, intrinsicCameraMatrix);
+[extrinsicRotationMatrix, extrinsicTranslationVector]=efficient_pnp_gauss(worldPoints1, imagePoints1, intrinsicCameraMatrix);
 
 
 %% NEXT STEP --
@@ -165,8 +155,8 @@ intrinsicCameraMatrix = [focalLengthPX 0 sceneResolution(1)/2; 0 focalLengthPX s
 
 
 projectionMatrix=intrinsicCameraMatrix*[extrinsicRotationMatrix,extrinsicTranslationVector];
-imagePointsReconstructedUnscaled=(projectionMatrix*worldPoints1')';
 
+imagePointsReconstructedUnscaled=(projectionMatrix*worldPoints1')';
 imagePointsReconstructed=zeros(nPoints,2);
 imagePointsReconstructed(:,1)=imagePointsReconstructedUnscaled(:,1)./imagePointsReconstructedUnscaled(:,3);
 imagePointsReconstructed(:,2)=imagePointsReconstructedUnscaled(:,2)./imagePointsReconstructedUnscaled(:,3);
@@ -187,3 +177,70 @@ plot3(worldPoints(:,1),worldPoints(:,2),worldPoints(:,3),'o','MarkerEdgeColor',[
 hold on
 plot3(worldPointsReconstructed(:,1),worldPointsReconstructed(:,2),worldPointsReconstructed(:,3),'.r')
 
+
+
+function [transparentEllipseParams, circleCenterProjection] = projectFwd(eyeParams, sceneGeometry)
+
+clear all
+close all
+
+figure
+
+for ii=1:77
+    
+azi = allPupilAzi(ii);
+ele = allPupilEle(ii);
+tors = 0;
+
+% Convert Fick axis rotations (azimuth, elevation) to a rotation matrix
+R1 = [1 0 0; 0 cosd(ele) -sind(ele); 0 sind(ele) cosd(ele)];
+R2 = [cosd(azi) 0 sind(azi); 0 1 0; -sind(azi) 0 cosd(azi)];
+R3 = [cosd(tors) -sind(tors) 0; sind(tors) cosd(tors) 0; 0 0 1];
+eyeRotation = R3*R2*R1;
+
+% Define a plane that contains five points around the pupil circle and a
+% 6th point at the center of the pupil
+nPerimPoints = 5;
+pupilWorldPointsAngles = 0:2*pi/nPerimPoints:2*pi-(2*pi/nPerimPoints);
+clear pupilWorldPoints
+pupilWorldPoints(:,3) = sin(pupilWorldPointsAngles)*pupilRadiusPX(1);
+pupilWorldPoints(:,2) = cos(pupilWorldPointsAngles)*pupilRadiusPX(1);
+pupilWorldPoints(:,1) = 0;
+pupilWorldPoints(nPerimPoints+1,:) = [0 0 0];
+
+% Define the location of the eye center of rotation
+centerOfRotation = [0 0 eyeRadiusPX];
+
+% Apply the eye rotation to the pupil plane
+worldPoints = ((pupilWorldPoints+centerOfRotation) * eyeRotation)-centerOfRotation;
+worldPoints1=[worldPoints, ones(nPerimPoints+1,1)];
+
+% Project the world points to the image plane
+imagePointsReconstructedUnscaled=(projectionMatrix*worldPoints1')';
+imagePointsReconstructed=zeros(nPerimPoints+1,2);
+imagePointsReconstructed(:,1)=imagePointsReconstructedUnscaled(:,1)./imagePointsReconstructedUnscaled(:,3);
+imagePointsReconstructed(:,2)=imagePointsReconstructedUnscaled(:,2)./imagePointsReconstructedUnscaled(:,3);
+
+% Find the center of the ellipse on the image plane
+pInitImplicit = ellipsefit_direct(imagePointsReconstructed(:,1),imagePointsReconstructed(:,2));
+pInitTransparent = ellipse_ex2transparent(ellipse_im2ex(pInitImplicit));
+
+plot(imagePointsReconstructed(6,1),imagePointsReconstructed(6,2),'.','MarkerEdgeColor',[.7 .7 .7],...
+   'MarkerFaceColor',[.7 0 0])
+hold on
+plot(pInitTransparent(1),pInitTransparent(2),'.r')
+
+centerErrorDistance(ii)=sqrt((imagePointsReconstructed(6,1)-pInitTransparent(1)).^2 + (imagePointsReconstructed(6,2)-pInitTransparent(2)).^2);
+centerErrorAngle(ii) = acosd(abs(imagePointsReconstructed(6,1)-pInitTransparent(1))/centerErrorDistance(ii));
+ellipseCenterDistanceFromCoP(ii) = sqrt((pInitTransparent(1)-320).^2 + (pInitTransparent(2)-240).^2);
+ellipseCenterAngleFromCoP(ii)= acosd(abs(pInitTransparent(1)-320)/ellipseCenterDistanceFromCoP(ii));
+
+end
+
+figure
+plot(ellipseCenterDistanceFromCoP,centerErrorDistance,'.k');
+figure
+plot(ellipseCenterAngleFromCoP,centerErrorAngle,'.k');
+
+
+end
