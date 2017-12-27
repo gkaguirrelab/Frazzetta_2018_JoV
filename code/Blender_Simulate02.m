@@ -1,11 +1,13 @@
 % DEMO generate eye movie
 
+close all
+clear all
 
-% Setup the video save location and path params
-
+%% Set paths and file names
 % This path should be defined in the eyeModelSupport local hook
 codeDirectory = '~/Documents/MATLAB/toolboxes/eyemodelSupport/code';
 
+% Where to save the results of our simulation
 exportsDirectory = '~/Desktop/Blender_Simulate01';
 pathParams.dataOutputDirFull = fullfile(exportsDirectory);
 pathParams.dataSourceDirFull = fullfile(exportsDirectory);
@@ -17,230 +19,212 @@ if exist(exportsDirectory,'dir')==0
     mkdir(exportsDirectory);
 end
 
-sensorSize = [36 24]; %mm
-aperture = 2.0;
-fieldOfViewDEG = 45;
-sceneResolution = [640 480];
-focalLengthPX = (sceneResolution(1)/2) / tand(45); % this is how it is defined in blender, but I am not sure it is right
-focalLengthMM = 18;
-focalLengthPX = (sceneResolution(2)/2) / tand(45); % this is the focal length that works
 
-pixelSizeMM = sensorSize./sceneResolution;
+%% Hard coded properties of the Blender camera
+% The focal length is set in the routine eyeModel/__init__.py
+% All intrinsic camera values are in units of pixels
+sceneResolutionPx = [640 480];
+opticalCenterPx = (sceneResolutionPx./2);
+focalLengthPX = (sceneResolutionPx(1)/2.0) / tan(45*pi/180 / 2);
+sceneGeometry.intrinsicCameraMatrix = ...
+    [focalLengthPX 0 opticalCenterPx(1);...
+     0 focalLengthPX opticalCenterPx(2);...
+     0 0 1];
+
+ 
+%% Hard coded aspect of the scene geometry
+% The eyeRadius is set in the routine eyeModel/__init__.py
+sceneGeometry.eyeRadius = 12;   % in mm
 
 
-% We find that objects in the image are 25% larger (in pixels) than what we
-% would calculate here. For now, we apply this fudge factor while we try to
-% understand how to calculate pixel size correctly.
-fudgeFactor = 1;
-pixelSizeMM = pixelSizeMM ./ fudgeFactor;
+%% Variable aspects of scene geometry
+% Variable aspect of the scene geometry. The Blender coordinate system
+% defines depth zero as being at the center of rotation of the eye.
+% Therefore, the depth position of the camera is relative to the center of
+% rotation of the eye. The distance of the camera from the imaged scene,
+% therefore, is equal to [cameraDepthPosition - eyeRadius]. We would like
+% it to be the case that the extrinsicTranslationVector is estimated to
+% have this scene distance value (50-12) for the Z dimension.
+cameraDepthPositionMM = 50; % in mm
 
+sceneGeometry.extrinsicTranslationVector = [0; 0; cameraDepthPositionMM - sceneGeometry.eyeRadius];
+sceneGeometry.extrinsicRotationMatrix = [1 0 0; 0 -1 0; 0 0 -1];
 
+%% Generate a set of gaze targets for the blender model
 
-% eye radius (hardcoded in the python function)
-eyeRadiusMM = 14;
-eyeRadiusPX = eyeRadiusMM/pixelSizeMM(1);
+% We define the gaze target in terms of head-fixed azimuth and elevation
+% rotations.
+aziSweeps = [-25:25:25];
+eleSteps = [-15:15:15];
 
-% The Blender coordinate system defines depth zero as being in the center
-% of rotation of the eye. Therefore, the camera distance is the distance of
-% the camera from the center of rotation of the eye.
-cameraDistanceMM = 50;
-
-% The camera is hard-coded in the python routine to focus upon (i.e.,
-% target) the front of the center of the eye. Therefore, the scene distance
-% is equal to the camera distance + the eye raidus. We compute the scene
-% distance in mm and then convert to pixels here.
-sceneDistancePX = (cameraDistanceMM-eyeRadiusMM)/pixelSizeMM(1);
-
-% define azimuth and elevation timeseries
-eleSteps = [-15:5:15];
-aziSweeps = [-25:5:25];
-
-allPupilAzi=[];
-allPupilEle=[];
+pupilCenterAzimuths=[];
+pupilCenterElevations=[];
 for ii = 1: length(eleSteps)
-    allPupilEle = [allPupilEle eleSteps(ii)*ones(1,length(aziSweeps))];
+    pupilCenterElevations = [pupilCenterElevations eleSteps(ii)*ones(1,length(aziSweeps))];
     if mod(ii,2)
-        allPupilAzi = [allPupilAzi aziSweeps];
+        pupilCenterAzimuths = [pupilCenterAzimuths aziSweeps];
     else
-        allPupilAzi = [allPupilAzi fliplr(aziSweeps)];
+        pupilCenterAzimuths = [pupilCenterAzimuths fliplr(aziSweeps)];
     end
 end
 
-
-
 % The eye is posed in the Blender model by defining the location in XYZ
-% coordinate space of an eye target. The coordinate system that we use in
-% the transparentTrack routines has the convention X = left/right; Y =
-% down/up; Z = nearer / farther. The subsequent python routine transposes
-% some of these dimensions to be appropriate for the Blender coordinate
-% convention, but this need not concern us here.
+% coordinate space of an eye target. Our sceneWorld coordinate system has
+% the convention X = left/right; Y = down/up; Z = nearer / farther, with
+% the origin corresponding to the front surface of the eye and the center
+% of the pupil when the line that connects the center of rotation of the
+% eye and the center of the pupil are normal to the image plane.
 %
-% We calculate the target of the gaze using equations that describe the
-% Fick axis rotation of the eye. In this system, the Y (down / up) position
-% of the center of the pupil is indenpendent of the azimuthal rotation. The
-% gazeTargetPositions that we generate correspond to a point that is
-% directly on the surface of the eye in the center of the pupil.
-gazeTargetPositionX = (eyeRadiusMM).*sind(allPupilAzi).*cosd(allPupilEle);
-gazeTargetPositionY = (eyeRadiusMM).*sind(allPupilEle);
-gazeTargetPositionZ = -(eyeRadiusMM).*cosd(allPupilAzi).*cosd(allPupilEle);
+% Blender, however, uses a sceneWorld coordinate system corresponding to X
+% = right / left; Y = nearer/farther, Z = down / up. Also, this coordinate
+% system has its origin on the center of rotation of the eye.
 
-% Define the pupil radius in pixels and the degree of eye closedness
-pupilRadiusMM = 2*ones(1,length(gazeTargetPositionX));
-pupilRadiusPX = pupilRadiusMM/pixelSizeMM(1);
-eyeClosedness = 0*ones(1,length(gazeTargetPositionX));
+% To pose the Blender model eye, we specify gaze targets in the Blender X,
+% Y, Z sceneWorld coordinate space. We define azimuthal and elevation
+% positions of the eye with respect to extrinsic (fixed) head-centered
+% coordinates.
+
+% Define the location of the center of the pupil in Blender
+% sceneCoordinates when the eye is in primary gaze
+
+for ii=1:length(pupilCenterAzimuths)
+    
+    % Get the rotation values for this frame
+    eyeAzimuth = pupilCenterAzimuths(ii);
+    eyeElevation = pupilCenterElevations(ii);
+    eyeTorsion = 0;
+    
+    % Define a rotation matrix
+    R3 = [cosd(eyeAzimuth) -sind(eyeAzimuth) 0; sind(eyeAzimuth) cosd(eyeAzimuth) 0; 0 0 1];
+    R2 = [cosd(eyeElevation) 0 sind(eyeElevation); 0 1 0; -sind(eyeElevation) 0 cosd(eyeElevation)];
+    R1 = [1 0 0; 0 cosd(eyeTorsion) -sind(eyeTorsion); 0 sind(eyeTorsion) cosd(eyeTorsion)];
+    
+    % This order (1-2-3) corresponds to a head-fixed, extrinsic, rotation
+    % matrix.
+    eyeRotation = R1*R2*R3;
+    
+    % Define the location of the eye center of rotation in the head-centered
+    % coordinate frame
+    pupilCenter = [-sceneGeometry.eyeRadius 0 0];
+    
+    % Apply the head-fixed rotation to center of the pupil
+    pupilCenterCoords = (eyeRotation*pupilCenter')';
+    
+    % Arrange the dimensions and signs to corresponds to the Blender model
+    gazeTargetPositionX(ii) = pupilCenterCoords(2)*-1;
+    gazeTargetPositionY(ii) = pupilCenterCoords(3);
+    gazeTargetPositionZ(ii) = pupilCenterCoords(1);
+    pupilRadiusMM(ii) = 2; % fix this at 2 mm
+    eyeClosedness(ii) = 0; % fix this at fully open
+end
 
 
 %% generate eye movie
-%generateEyeMovie(codeDirectory,exportsDirectory,gazeTargetPositionX, gazeTargetPositionY, gazeTargetPositionZ, pupilRadiusMM, eyeClosedness, cameraDistanceMM)
+generateEyeMovie(codeDirectory,exportsDirectory,gazeTargetPositionX, gazeTargetPositionY, gazeTargetPositionZ, pupilRadiusMM, eyeClosedness, cameraDepthPositionMM)
+ 
+% rename the movie file
+movefile(fullfile(exportsDirectory,'pupil_movie.avi'),fullfile(exportsDirectory,[pathParams.runName '_gray.avi']));
 
-% rename file
-%movefile(fullfile(exportsDirectory,'pupil_movie.avi'),fullfile(exportsDirectory,[pathParams.runName '_gray.avi']));
+% move the rendered frames into a sub-directory
+renderedFramesDirectory = '~/Desktop/Blender_Simulate01/renderedFrames';
+if exist(renderedFramesDirectory,'dir')==0
+    mkdir(renderedFramesDirectory);
+end
+system(['mv ' exportsDirectory '/reconstructedFrame*png ' renderedFramesDirectory '/']);
+
 
 %% Run the processing pipeline
-% runVideoPipeline( pathParams, ...
-%     'verbosity', 'full', 'useParallel',false, 'catchErrors', false,...
-%     'pupilFrameMask', [60 60], 'maskBox', [0.9 0.9], 'pupilGammaCorrection',0.7, 'pupilRange', [30 80], ...
-%     'overwriteControlFile',true, 'glintPatchRadius', 10, ...
-%     'ellipseTransparentLB',[0,0, 20, 0, 0],...
-%     'ellipseTransparentUB',[sceneResolution(1),sceneResolution(2), 20000, 1.0, pi],...
-%     'candidateThetas',0:pi/16:2*pi,...    
-%     'badFrameErrorThreshold', 8, ...
-%     'sceneGeometryLB',[0, 0, (sceneDistancePX+eyeRadiusPX)*1.2, 25],'sceneGeometryUB',[640, 480, (sceneDistancePX+eyeRadiusPX)*1.2, 500],...
-%     'skipStageByNumber',1);
+runVideoPipeline( pathParams, ...
+    'verbosity', 'full', 'useParallel',false, 'catchErrors', false,...
+    'pupilFrameMask', [60 60], 'maskBox', [1 1], 'pupilGammaCorrection',0.5, 'pupilRange', [20 80], ...
+    'overwriteControlFile',true, 'glintPatchRadius', 10,'cutErrorThreshold',0.5, ...
+    'ellipseTransparentLB',[0,0, 20, 0, 0],...
+    'ellipseTransparentUB',[sceneResolutionPx(1),sceneResolutionPx(2), 20000, 1.0, pi],...
+    'candidateThetas',0:pi/16:2*pi,...
+    'badFrameErrorThreshold', 8, ...
+    'makeFitVideoByNumber',6,...
+    'skipStageByNumber',1,'lastStage','fitPupilPerimeter');
 
 % Load the result files into memory
 load(fullfile(pathParams.dataOutputDirFull,[pathParams.runName '_pupil.mat']));
-load(fullfile(pathParams.dataOutputDirFull,[pathParams.runName '_sceneGeometry.mat']));
 
-%% Report how closely we have reconstructed the actual scene geometry
-fprintf('Veridical scene geometry - eye center: [%0.1f, %0.1f, %0.1f], eye radius: %0.1f \n',sceneResolution(1)/2,  sceneResolution(2)/2, sceneDistancePX+eyeRadiusPX, eyeRadiusPX);
-fprintf('Estimated scene geometry - eye center: [%0.1f, %0.1f, %0.1f], eye radius: %0.1f \n',sceneGeometry.eyeCenter.X, sceneGeometry.eyeCenter.Y, sceneGeometry.eyeCenter.Z, sceneGeometry.eyeRadius);
 
-%% use the inverse projection function and the scene geometry to recover the angles
+%% Test the forward projection model
 
-reconstructedPupilAzi =[];
-reconstructedPupilEle = [];
+% Obtain the ellipses found on the image plane
+imagePlaneEllipsesObserved = pupilData.ellipseParamsUnconstrained_mean;
+imagePlaneEllipseCentersObserved = imagePlaneEllipsesObserved(:,1:2);
 
-nPoints = size(pupilData.ellipseParamsAreaSmoothed_mean,1);
 
-for ii=1:nPoints
-    worldPoints(ii,1) = eyeRadiusPX*sind(allPupilAzi(ii))*cosd(allPupilEle(ii));
-    worldPoints(ii,2) = eyeRadiusPX*sind(allPupilEle(ii));
-    worldPoints(ii,3) = eyeRadiusPX*cosd(allPupilAzi(ii))*cosd(allPupilEle(ii));
-    
-    imagePoints(ii,1)=pupilData.ellipseParamsUnconstrained_mean(ii,1);
-    imagePoints(ii,2)=pupilData.ellipseParamsUnconstrained_mean(ii,2);
+
+%% Use the sceneGeometry with our forward model
+% The resulting pupil centers on the image plane should match those
+% obtained by the prior projection
+
+for ii=1:length(pupilCenterAzimuths)
+    [projectedEllipsesOnImagePlane(ii,:), projectedPupilCentersOnImagePlane(ii,:)] = ...
+        pupilProjection_fwd(pupilCenterAzimuths(ii), pupilCenterElevations(ii), pupilRadiusMM(ii), sceneGeometry);
 end
 
-worldPoints1=[worldPoints, ones(nPoints,1)];
-imagePoints1=[imagePoints, ones(nPoints,1)];
 
-intrinsicCameraMatrix = [focalLengthPX 0 sceneResolution(1)/2; 0 focalLengthPX sceneResolution(2)/2; 0 0 1];
-[extrinsicRotationMatrix, extrinsicTranslationVector]=efficient_pnp_gauss(worldPoints1, imagePoints1, intrinsicCameraMatrix);
-
-
-%% NEXT STEP --
-% Create a set of 5, 3D world coordinate points that are on the border of a
-% pupil that is on a tilted plane for the azi / ele of the eye. Project
-% these to the image plane. Fit the 5 points with an ellipse (5 points
-% are needed to uniquely specify the ellipse). Identify the center of that
-% fitted ellipse. This is the predicted location of the projection of that
-% pupil in the image plane. Can also project the center of the circle and
-% see where that lands.
-
-
-
-% Reconstruct the points on the image plane
-
-
-
-projectionMatrix=intrinsicCameraMatrix*[extrinsicRotationMatrix,extrinsicTranslationVector];
-
-imagePointsReconstructedUnscaled=(projectionMatrix*worldPoints1')';
-imagePointsReconstructed=zeros(nPoints,2);
-imagePointsReconstructed(:,1)=imagePointsReconstructedUnscaled(:,1)./imagePointsReconstructedUnscaled(:,3);
-imagePointsReconstructed(:,2)=imagePointsReconstructedUnscaled(:,2)./imagePointsReconstructedUnscaled(:,3);
-
-
-
-reconstructionRMSE = sqrt(sum(sqrt((imagePointsReconstructed(:,1)-imagePoints(:,1)).^2 + (imagePointsReconstructed(:,2)-imagePoints(:,2)).^2)));
+%% Plot some results
 
 figure
-plot(imagePoints(:,1),imagePoints(:,2),'o','MarkerEdgeColor',[.7 .7 .7],...
+plot(imagePlaneEllipseCentersObserved(:,1),imagePlaneEllipseCentersObserved(:,2),'o','MarkerEdgeColor',[.7 .7 .7],...
     'MarkerFaceColor',[.7 .7 .7])
 hold on
-plot(imagePointsReconstructed(:,1),imagePointsReconstructed(:,2),'.r')
+plot(projectedEllipsesOnImagePlane(:,1),projectedEllipsesOnImagePlane(:,2),'.r')
+plot(projectedPupilCentersOnImagePlane(:,1),projectedPupilCentersOnImagePlane(:,2),'.b')
 
-figure
-plot3(worldPoints(:,1),worldPoints(:,2),worldPoints(:,3),'o','MarkerEdgeColor',[.7 .7 .7],...
-    'MarkerFaceColor',[.7 .7 .7])
-hold on
-plot3(worldPointsReconstructed(:,1),worldPointsReconstructed(:,2),worldPointsReconstructed(:,3),'.r')
+axis equal
+legend({'imagePlaneEllipseCenters - Observed','imagePlaneEllipseCenters - Predicted','pupilCentersOnImagePlane - Predicted'})
 
 
 
-function [transparentEllipseParams, circleCenterProjection] = projectFwd(eyeParams, sceneGeometry)
-
-clear all
-close all
-
-figure
-
-for ii=1:77
-    
-azi = allPupilAzi(ii);
-ele = allPupilEle(ii);
-tors = 0;
-
-% Convert Fick axis rotations (azimuth, elevation) to a rotation matrix
-R1 = [1 0 0; 0 cosd(ele) -sind(ele); 0 sind(ele) cosd(ele)];
-R2 = [cosd(azi) 0 sind(azi); 0 1 0; -sind(azi) 0 cosd(azi)];
-R3 = [cosd(tors) -sind(tors) 0; sind(tors) cosd(tors) 0; 0 0 1];
-eyeRotation = R3*R2*R1;
-
-% Define a plane that contains five points around the pupil circle and a
-% 6th point at the center of the pupil
-nPerimPoints = 5;
-pupilWorldPointsAngles = 0:2*pi/nPerimPoints:2*pi-(2*pi/nPerimPoints);
-clear pupilWorldPoints
-pupilWorldPoints(:,3) = sin(pupilWorldPointsAngles)*pupilRadiusPX(1);
-pupilWorldPoints(:,2) = cos(pupilWorldPointsAngles)*pupilRadiusPX(1);
-pupilWorldPoints(:,1) = 0;
-pupilWorldPoints(nPerimPoints+1,:) = [0 0 0];
-
-% Define the location of the eye center of rotation
-centerOfRotation = [0 0 eyeRadiusPX];
-
-% Apply the eye rotation to the pupil plane
-worldPoints = ((pupilWorldPoints+centerOfRotation) * eyeRotation)-centerOfRotation;
-worldPoints1=[worldPoints, ones(nPerimPoints+1,1)];
-
-% Project the world points to the image plane
-imagePointsReconstructedUnscaled=(projectionMatrix*worldPoints1')';
-imagePointsReconstructed=zeros(nPerimPoints+1,2);
-imagePointsReconstructed(:,1)=imagePointsReconstructedUnscaled(:,1)./imagePointsReconstructedUnscaled(:,3);
-imagePointsReconstructed(:,2)=imagePointsReconstructedUnscaled(:,2)./imagePointsReconstructedUnscaled(:,3);
-
-% Find the center of the ellipse on the image plane
-pInitImplicit = ellipsefit_direct(imagePointsReconstructed(:,1),imagePointsReconstructed(:,2));
-pInitTransparent = ellipse_ex2transparent(ellipse_im2ex(pInitImplicit));
-
-plot(imagePointsReconstructed(6,1),imagePointsReconstructed(6,2),'.','MarkerEdgeColor',[.7 .7 .7],...
-   'MarkerFaceColor',[.7 0 0])
-hold on
-plot(pInitTransparent(1),pInitTransparent(2),'.r')
-
-centerErrorDistance(ii)=sqrt((imagePointsReconstructed(6,1)-pInitTransparent(1)).^2 + (imagePointsReconstructed(6,2)-pInitTransparent(2)).^2);
-centerErrorAngle(ii) = acosd(abs(imagePointsReconstructed(6,1)-pInitTransparent(1))/centerErrorDistance(ii));
-ellipseCenterDistanceFromCoP(ii) = sqrt((pInitTransparent(1)-320).^2 + (pInitTransparent(2)-240).^2);
-ellipseCenterAngleFromCoP(ii)= acosd(abs(pInitTransparent(1)-320)/ellipseCenterDistanceFromCoP(ii));
-
-end
-
-figure
-plot(ellipseCenterDistanceFromCoP,centerErrorDistance,'.k');
-figure
-plot(ellipseCenterAngleFromCoP,centerErrorAngle,'.k');
 
 
-end
+% %% Estimate the extrinsic scene matrices
+% % We use the efficient PnP technique to map the gazeTargetPosition points
+% % (which correspond to the sceneCoordinate locations of the center of the
+% % pupil) to the centers of the ellipses. This estimate does not account for
+% % the discrepancy between the center of the ellipse on the image plane and
+% % the projected center of the pupil circle on the image plane.
+% 
+% nPoints = length(pupilCenterAzimuths);
+% 
+% % Obtain the world points. Note that we need to adjust from the Blender
+% % model depth origin (center of rotation of the eye) to the camera
+% % coordinate origin (front surface of eyeball)
+% worldPupilCenterPoints=[gazeTargetPositionX; gazeTargetPositionY; gazeTargetPositionZ+sceneGeometry.eyeRadius]';
+% 
+% % Obtain the ellipses found on the image plane
+% imagePlaneEllipsesObserved = pupilData.ellipseParamsUnconstrained_mean;
+% imagePlaneEllipseCentersObserved = imagePlaneEllipsesObserved(:,1:2);
+% 
+% % Add a vector of ones to the coordinates to allow for application of the
+% % translation matrix
+% worldPupilCenterPoints1=[worldPupilCenterPoints, ones(nPoints,1)];
+% imagePlaneEllipseCenters1=[imagePlaneEllipseCentersObserved, ones(nPoints,1)];
+% 
+% % Estimate the extrinsic projective matrices through correspondence of the
+% % world and image plane points
+% [extrinsicRotationMatrix, extrinsicTranslationVector] = ...
+%     efficient_pnp(worldPupilCenterPoints1, imagePlaneEllipseCenters1, sceneGeometry.intrinsicCameraMatrix);
+%  
+% % Save the extrinsic matrices in the sceneGeometry structure
+% sceneGeometry.extrinsicTranslationVector = extrinsicTranslationVector;
+% sceneGeometry.extrinsicRotationMatrix = extrinsicRotationMatrix;
+% 
+% % Assemble the forward projection matrix
+% projectionMatrix = ...
+%     sceneGeometry.intrinsicCameraMatrix * ...
+%     [ sceneGeometry.extrinsicRotationMatrix, ...
+%     sceneGeometry.extrinsicTranslationVector];
+%
+% Project the pupil centers to the image plane using the sceneGeometry
+% projectedPupilCentersOnImagePlane_A = ( projectionMatrix * worldPupilCenterPoints1')';
+% 
+% % Scale by the third dimension of the projection
+% projectedPupilCentersOnImagePlane_A(:,1:2)=projectedPupilCentersOnImagePlane_A(:,1:2)./projectedPupilCentersOnImagePlane_A(:,3);
+% projectedPupilCentersOnImagePlane_A = projectedPupilCentersOnImagePlane_A(:,1:2);
+
