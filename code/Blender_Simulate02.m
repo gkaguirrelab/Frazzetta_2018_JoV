@@ -167,20 +167,29 @@ for ii=1:length(pupilCenterAzimuths)
 end
 
 
-%% Test the pupilProjection_inv function on the forward model results 
+%% Conduct some test
+
+% Can we invert the forward projection? We test if the forward projection
+% ellipsed can be modeled with the sceneGeometry within a 0.1% error on
+% matching ellipse theta, eccentrivity, and error.
 for ii=1:length(pupilCenterAzimuths)
     [eyeParams, bestMatchEllipseOnImagePlane, constraintViolations(ii)] = ...
-        pupilProjection_inv(projectedEllipsesOnImagePlane(ii,:), sceneGeometry);
+        pupilProjection_inv(projectedEllipsesOnImagePlane(ii,:), sceneGeometry, 'constraintTolerance', 0.001);
     eyeParamError(ii,:)=eyeParams-[pupilCenterAzimuths(ii), pupilCenterElevations(ii), pupilRadii(ii)];
     ellipseParamError(ii,:)=bestMatchEllipseOnImagePlane-projectedEllipsesOnImagePlane(ii,:);
 end
+fprintf('There were %d / %d constraint violations in the inversion of the forward model \n',sum(constraintViolations),length(pupilCenterAzimuths));
 
+% Can we invert the Blender model? We test if the rendered ellipses can be
+% modeled with the sceneGeometry within a 1% error on matching ellipse
+% theta, eccentrivity, and error.
 for ii=1:length(pupilCenterAzimuths)
     [eyeParams, bestMatchEllipseOnImagePlane, constraintViolations(ii)] = ...
-        pupilProjection_inv(imagePlaneEllipsesObserved(ii,:), sceneGeometry);
+        pupilProjection_inv(imagePlaneEllipsesObserved(ii,:), sceneGeometry, 'constraintTolerance', 0.01);
     eyeParamError(ii,:)=eyeParams-[pupilCenterAzimuths(ii), pupilCenterElevations(ii), pupilRadii(ii)];
     ellipseParamError(ii,:)=bestMatchEllipseOnImagePlane-imagePlaneEllipsesObserved(ii,:);
 end
+fprintf('There were %d / %d constraint violations in the inversion of the Blender model\n',sum(constraintViolations),length(pupilCenterAzimuths));
 
 
 %% Plot some results
