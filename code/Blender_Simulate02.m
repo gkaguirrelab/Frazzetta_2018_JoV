@@ -114,16 +114,16 @@ for ii=1:length(pupilCenterAzimuths)
     gazeTargetPositionX(ii) = pupilCenterCoords(2)*-1;
     gazeTargetPositionY(ii) = pupilCenterCoords(3);
     gazeTargetPositionZ(ii) = pupilCenterCoords(1);
-    pupilRadiusMM(ii) = 2; % fix this at 2 mm
+    pupilRadii(ii) = 2; % fix this at 2 mm
     eyeClosedness(ii) = 0; % fix this at fully open
 end
 
 
 %% generate eye movie
-generateEyeMovie(codeDirectory,exportsDirectory,gazeTargetPositionX, gazeTargetPositionY, gazeTargetPositionZ, pupilRadiusMM, eyeClosedness, cameraDepthPositionMM)
+%generateEyeMovie(codeDirectory,exportsDirectory,gazeTargetPositionX, gazeTargetPositionY, gazeTargetPositionZ, pupilRadii, eyeClosedness, cameraDepthPositionMM)
  
 % rename the movie file
-movefile(fullfile(exportsDirectory,'pupil_movie.avi'),fullfile(exportsDirectory,[pathParams.runName '_gray.avi']));
+%movefile(fullfile(exportsDirectory,'pupil_movie.avi'),fullfile(exportsDirectory,[pathParams.runName '_gray.avi']));
 
 % move the rendered frames into a sub-directory
 renderedFramesDirectory = '~/Desktop/Blender_Simulate01/renderedFrames';
@@ -134,16 +134,16 @@ system(['mv ' exportsDirectory '/reconstructedFrame*png ' renderedFramesDirector
 
 
 %% Run the processing pipeline
-runVideoPipeline( pathParams, ...
-    'verbosity', 'full', 'useParallel',false, 'catchErrors', false,...
-    'pupilFrameMask', [60 60], 'maskBox', [1 1], 'pupilGammaCorrection',0.5, 'pupilRange', [20 80], ...
-    'overwriteControlFile',true, 'glintPatchRadius', 10,'cutErrorThreshold',0.5, ...
-    'ellipseTransparentLB',[0,0, 20, 0, 0],...
-    'ellipseTransparentUB',[sceneResolutionPx(1),sceneResolutionPx(2), 20000, 1.0, pi],...
-    'candidateThetas',0:pi/16:2*pi,...
-    'badFrameErrorThreshold', 8, ...
-    'makeFitVideoByNumber',6,...
-    'skipStageByNumber',1,'lastStage','fitPupilPerimeter');
+% runVideoPipeline( pathParams, ...
+%     'verbosity', 'full', 'useParallel',false, 'catchErrors', false,...
+%     'pupilFrameMask', [60 60], 'maskBox', [1 1], 'pupilGammaCorrection',0.5, 'pupilRange', [20 80], ...
+%     'overwriteControlFile',true, 'glintPatchRadius', 10,'cutErrorThreshold',0.5, ...
+%     'ellipseTransparentLB',[0,0, 20, 0, 0],...
+%     'ellipseTransparentUB',[sceneResolutionPx(1),sceneResolutionPx(2), 20000, 1.0, pi],...
+%     'candidateThetas',0:pi/16:2*pi,...
+%     'badFrameErrorThreshold', 8, ...
+%     'makeFitVideoByNumber',6,...
+%     'skipStageByNumber',1,'lastStage','fitPupilPerimeter');
 
 % Load the result files into memory
 load(fullfile(pathParams.dataOutputDirFull,[pathParams.runName '_pupil.mat']));
@@ -163,7 +163,23 @@ imagePlaneEllipseCentersObserved = imagePlaneEllipsesObserved(:,1:2);
 
 for ii=1:length(pupilCenterAzimuths)
     [projectedEllipsesOnImagePlane(ii,:), projectedPupilCentersOnImagePlane(ii,:)] = ...
-        pupilProjection_fwd(pupilCenterAzimuths(ii), pupilCenterElevations(ii), pupilRadiusMM(ii), sceneGeometry);
+        pupilProjection_fwd([pupilCenterAzimuths(ii), pupilCenterElevations(ii), pupilRadii(ii)], sceneGeometry);
+end
+
+
+%% Test the pupilProjection_inv function on the forward model results 
+for ii=1:length(pupilCenterAzimuths)
+    [eyeParams, bestMatchEllipseOnImagePlane, constraintViolations(ii)] = ...
+        pupilProjection_inv(projectedEllipsesOnImagePlane(ii,:), sceneGeometry);
+    eyeParamError(ii,:)=eyeParams-[pupilCenterAzimuths(ii), pupilCenterElevations(ii), pupilRadii(ii)];
+    ellipseParamError(ii,:)=bestMatchEllipseOnImagePlane-projectedEllipsesOnImagePlane(ii,:);
+end
+
+for ii=1:length(pupilCenterAzimuths)
+    [eyeParams, bestMatchEllipseOnImagePlane, constraintViolations(ii)] = ...
+        pupilProjection_inv(imagePlaneEllipsesObserved(ii,:), sceneGeometry);
+    eyeParamError(ii,:)=eyeParams-[pupilCenterAzimuths(ii), pupilCenterElevations(ii), pupilRadii(ii)];
+    ellipseParamError(ii,:)=bestMatchEllipseOnImagePlane-imagePlaneEllipsesObserved(ii,:);
 end
 
 
@@ -180,51 +196,4 @@ axis equal
 legend({'imagePlaneEllipseCenters - Observed','imagePlaneEllipseCenters - Predicted','pupilCentersOnImagePlane - Predicted'})
 
 
-
-
-
-% %% Estimate the extrinsic scene matrices
-% % We use the efficient PnP technique to map the gazeTargetPosition points
-% % (which correspond to the sceneCoordinate locations of the center of the
-% % pupil) to the centers of the ellipses. This estimate does not account for
-% % the discrepancy between the center of the ellipse on the image plane and
-% % the projected center of the pupil circle on the image plane.
-% 
-% nPoints = length(pupilCenterAzimuths);
-% 
-% % Obtain the world points. Note that we need to adjust from the Blender
-% % model depth origin (center of rotation of the eye) to the camera
-% % coordinate origin (front surface of eyeball)
-% worldPupilCenterPoints=[gazeTargetPositionX; gazeTargetPositionY; gazeTargetPositionZ+sceneGeometry.eyeRadius]';
-% 
-% % Obtain the ellipses found on the image plane
-% imagePlaneEllipsesObserved = pupilData.ellipseParamsUnconstrained_mean;
-% imagePlaneEllipseCentersObserved = imagePlaneEllipsesObserved(:,1:2);
-% 
-% % Add a vector of ones to the coordinates to allow for application of the
-% % translation matrix
-% worldPupilCenterPoints1=[worldPupilCenterPoints, ones(nPoints,1)];
-% imagePlaneEllipseCenters1=[imagePlaneEllipseCentersObserved, ones(nPoints,1)];
-% 
-% % Estimate the extrinsic projective matrices through correspondence of the
-% % world and image plane points
-% [extrinsicRotationMatrix, extrinsicTranslationVector] = ...
-%     efficient_pnp(worldPupilCenterPoints1, imagePlaneEllipseCenters1, sceneGeometry.intrinsicCameraMatrix);
-%  
-% % Save the extrinsic matrices in the sceneGeometry structure
-% sceneGeometry.extrinsicTranslationVector = extrinsicTranslationVector;
-% sceneGeometry.extrinsicRotationMatrix = extrinsicRotationMatrix;
-% 
-% % Assemble the forward projection matrix
-% projectionMatrix = ...
-%     sceneGeometry.intrinsicCameraMatrix * ...
-%     [ sceneGeometry.extrinsicRotationMatrix, ...
-%     sceneGeometry.extrinsicTranslationVector];
-%
-% Project the pupil centers to the image plane using the sceneGeometry
-% projectedPupilCentersOnImagePlane_A = ( projectionMatrix * worldPupilCenterPoints1')';
-% 
-% % Scale by the third dimension of the projection
-% projectedPupilCentersOnImagePlane_A(:,1:2)=projectedPupilCentersOnImagePlane_A(:,1:2)./projectedPupilCentersOnImagePlane_A(:,3);
-% projectedPupilCentersOnImagePlane_A = projectedPupilCentersOnImagePlane_A(:,1:2);
 
