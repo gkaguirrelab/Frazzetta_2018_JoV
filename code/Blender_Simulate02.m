@@ -68,6 +68,8 @@ for ii = 1: length(eleSteps)
     end
 end
 
+nFrames = length(pupilCenterAzimuths);
+
 % The eye is posed in the Blender model by defining the location in XYZ
 % coordinate space of an eye target. Our sceneWorld coordinate system has
 % the convention X = left/right; Y = down/up; Z = nearer / farther, with
@@ -87,7 +89,7 @@ end
 % Define the location of the center of the pupil in Blender
 % sceneCoordinates when the eye is in primary gaze
 
-for ii=1:length(pupilCenterAzimuths)
+for ii=1:nFrames
     
     % Get the rotation values for this frame
     eyeAzimuth = pupilCenterAzimuths(ii);
@@ -120,10 +122,10 @@ end
 
 
 %% generate eye movie
-%generateEyeMovie(codeDirectory,exportsDirectory,gazeTargetPositionX, gazeTargetPositionY, gazeTargetPositionZ, pupilRadii, eyeClosedness, cameraDepthPositionMM)
+generateEyeMovie(codeDirectory,exportsDirectory,gazeTargetPositionX, gazeTargetPositionY, gazeTargetPositionZ, pupilRadii, eyeClosedness, cameraDepthPositionMM)
  
 % rename the movie file
-%movefile(fullfile(exportsDirectory,'pupil_movie.avi'),fullfile(exportsDirectory,[pathParams.runName '_gray.avi']));
+movefile(fullfile(exportsDirectory,'pupil_movie.avi'),fullfile(exportsDirectory,[pathParams.runName '_gray.avi']));
 
 % move the rendered frames into a sub-directory
 renderedFramesDirectory = '~/Desktop/Blender_Simulate01/renderedFrames';
@@ -134,19 +136,20 @@ system(['mv ' exportsDirectory '/reconstructedFrame*png ' renderedFramesDirector
 
 
 %% Run the processing pipeline
-% runVideoPipeline( pathParams, ...
-%     'verbosity', 'full', 'useParallel',false, 'catchErrors', false,...
-%     'pupilFrameMask', [60 60], 'maskBox', [1 1], 'pupilGammaCorrection',0.5, 'pupilRange', [20 80], ...
-%     'overwriteControlFile',true, 'glintPatchRadius', 10,'cutErrorThreshold',0.5, ...
-%     'ellipseTransparentLB',[0,0, 20, 0, 0],...
-%     'ellipseTransparentUB',[sceneResolutionPx(1),sceneResolutionPx(2), 20000, 1.0, pi],...
-%     'candidateThetas',0:pi/16:2*pi,...
-%     'badFrameErrorThreshold', 8, ...
-%     'makeFitVideoByNumber',6,...
-%     'skipStageByNumber',1,'lastStage','fitPupilPerimeter');
+runVideoPipeline( pathParams, ...
+    'verbosity', 'full', 'useParallel',false, 'catchErrors', false,...
+    'pupilFrameMask', [60 60], 'maskBox', [1 1], 'pupilGammaCorrection',0.5, 'pupilRange', [20 80], ...
+    'overwriteControlFile',true, 'glintPatchRadius', 10,'cutErrorThreshold',0.5, ...
+    'ellipseTransparentLB',[0,0, 20, 0, 0],...
+    'ellipseTransparentUB',[sceneResolutionPx(1),sceneResolutionPx(2), 20000, 1.0, pi],...
+    'candidateThetas',0:pi/16:2*pi,...
+    'badFrameErrorThreshold', 8, ...
+    'makeFitVideoByNumber',6,...
+    'skipStageByNumber',1,'lastStage','fitPupilPerimeter');
 
 % Load the result files into memory
 load(fullfile(pathParams.dataOutputDirFull,[pathParams.runName '_pupil.mat']));
+
 
 
 %% Test the forward projection model
@@ -155,54 +158,59 @@ load(fullfile(pathParams.dataOutputDirFull,[pathParams.runName '_pupil.mat']));
 imagePlaneEllipsesObserved = pupilData.ellipseParamsUnconstrained_mean;
 imagePlaneEllipseCentersObserved = imagePlaneEllipsesObserved(:,1:2);
 
-
-
-%% Use the sceneGeometry with our forward model
-% The resulting pupil centers on the image plane should match those
-% obtained by the prior projection
-
-for ii=1:length(pupilCenterAzimuths)
-    [projectedEllipsesOnImagePlane(ii,:), projectedPupilCentersOnImagePlane(ii,:)] = ...
-        pupilProjection_fwd([pupilCenterAzimuths(ii), pupilCenterElevations(ii), pupilRadii(ii)], sceneGeometry);
-end
-
-
-%% Conduct some test
-
-% Can we invert the forward projection? We test if the forward projection
-% ellipsed can be modeled with the sceneGeometry within a 0.1% error on
-% matching ellipse theta, eccentrivity, and error.
-for ii=1:length(pupilCenterAzimuths)
-    [eyeParams, bestMatchEllipseOnImagePlane, constraintViolations(ii)] = ...
-        pupilProjection_inv(projectedEllipsesOnImagePlane(ii,:), sceneGeometry, 'constraintTolerance', 0.001);
-    eyeParamError(ii,:)=eyeParams-[pupilCenterAzimuths(ii), pupilCenterElevations(ii), pupilRadii(ii)];
-    ellipseParamError(ii,:)=bestMatchEllipseOnImagePlane-projectedEllipsesOnImagePlane(ii,:);
-end
-fprintf('There were %d / %d constraint violations in the inversion of the forward model \n',sum(constraintViolations),length(pupilCenterAzimuths));
+% Open a figure and plot the observed ellipse centers
+figure
+plot(imagePlaneEllipseCentersObserved(:,1),imagePlaneEllipseCentersObserved(:,2),'o','MarkerEdgeColor',[.7 .7 .7],...
+    'MarkerFaceColor',[.7 .7 .7])
+axis equal
+hold on
 
 % Can we invert the Blender model? We test if the rendered ellipses can be
 % modeled with the sceneGeometry within a 1% error on matching ellipse
 % theta, eccentrivity, and error.
-for ii=1:length(pupilCenterAzimuths)
-    [eyeParams, bestMatchEllipseOnImagePlane, constraintViolations(ii)] = ...
-        pupilProjection_inv(imagePlaneEllipsesObserved(ii,:), sceneGeometry, 'constraintTolerance', 0.01);
+constraintTolerance = 0.01;
+for ii=1:nFrames
+    [eyeParams, projectedEllipsesOnImagePlane(ii,:), centerError(ii), shapeError(ii), areaError(ii)] = ...
+        pupilProjection_inv(imagePlaneEllipsesObserved(ii,:), sceneGeometry, 'constraintTolerance', constraintTolerance);
     eyeParamError(ii,:)=eyeParams-[pupilCenterAzimuths(ii), pupilCenterElevations(ii), pupilRadii(ii)];
-    ellipseParamError(ii,:)=bestMatchEllipseOnImagePlane-imagePlaneEllipsesObserved(ii,:);
+    ellipseParamError(ii,:)=projectedEllipsesOnImagePlane(ii,:)-imagePlaneEllipsesObserved(ii,:);
 end
-fprintf('There were %d / %d constraint violations in the inversion of the Blender model\n',sum(constraintViolations),length(pupilCenterAzimuths));
+fprintf('Attempt to model observed image plane ellipses using design-specified sceneGeometry:\n')
+fprintf('\t %d of %d ellipses were fit with < %f error in shape \n',sum(shapeError<constraintTolerance),nFrames,constraintTolerance);
+fprintf('\t Maximum eye azimuth error: %f \n',max(eyeParamError(:,1)));
+fprintf('\t Maximum eye elevation error: %f \n',max(eyeParamError(:,2)));
+fprintf('\t Maximum pupil radius error: %f \n',max(eyeParamError(:,3)));
+fprintf('\t Maximum ellipse center distance error: %f \n',max(centerError));
+fprintf('\t Maximum ellipse area error: %f \n',max(areaError));
 
-
-%% Plot some results
-
-figure
-plot(imagePlaneEllipseCentersObserved(:,1),imagePlaneEllipseCentersObserved(:,2),'o','MarkerEdgeColor',[.7 .7 .7],...
-    'MarkerFaceColor',[.7 .7 .7])
-hold on
+% Update the plot with these centers
 plot(projectedEllipsesOnImagePlane(:,1),projectedEllipsesOnImagePlane(:,2),'.r')
-plot(projectedPupilCentersOnImagePlane(:,1),projectedPupilCentersOnImagePlane(:,2),'.b')
 
-axis equal
-legend({'imagePlaneEllipseCenters - Observed','imagePlaneEllipseCenters - Predicted','pupilCentersOnImagePlane - Predicted'})
+% Search across sceneGeometry parameters to improve the fit to Blender
+[adjustedSceneGeometry, distanceError] = findExtrinsicTranslationVector(imagePlaneEllipsesObserved, sceneGeometry);
+
+% Can we invert the Blender model? Test again, now with the adjusted scene
+% geometry
+constraintTolerance = 0.01;
+for ii=1:nFrames
+    [eyeParams, projectedEllipsesOnImagePlane(ii,:), centerError(ii), shapeError(ii), areaError(ii)] = ...
+        pupilProjection_inv(imagePlaneEllipsesObserved(ii,:), adjustedSceneGeometry, 'constraintTolerance', constraintTolerance);
+    eyeParamError(ii,:)=eyeParams-[pupilCenterAzimuths(ii), pupilCenterElevations(ii), pupilRadii(ii)];
+    ellipseParamError(ii,:)=projectedEllipsesOnImagePlane(ii,:)-imagePlaneEllipsesObserved(ii,:);
+end
+fprintf('Attempt to model observed image plane ellipses using adjusted sceneGeometry:\n')
+fprintf('\t %d of %d ellipses were fit with < %f error in shape \n',sum(shapeError<constraintTolerance),nFrames,constraintTolerance);
+fprintf('\t Maximum eye azimuth error: %f \n',max(eyeParamError(:,1)));
+fprintf('\t Maximum eye elevation error: %f \n',max(eyeParamError(:,2)));
+fprintf('\t Maximum pupil radius error: %f \n',max(eyeParamError(:,3)));
+fprintf('\t Maximum ellipse center distance error: %f \n',max(centerError));
+fprintf('\t Maximum ellipse area error: %f \n',max(areaError));
+
+
+% Update the plot with these centers
+plot(projectedEllipsesOnImagePlane(:,1),projectedEllipsesOnImagePlane(:,2),'.g')
+legend({'observed ellipse centers','modeled with design sceneGeometry','modeled with adjusted sceneGeometry'})
+hold off
 
 
 
