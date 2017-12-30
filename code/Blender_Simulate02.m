@@ -26,15 +26,15 @@ end
 sceneResolutionPx = [640 480];
 opticalCenterPx = (sceneResolutionPx./2);
 focalLengthPX = (sceneResolutionPx(1)/2.0) / tan(45*pi/180 / 2);
-designSceneGeometry.intrinsicCameraMatrix = ...
+intrinsicCameraMatrix = ...
     [focalLengthPX 0 opticalCenterPx(1);...
-     0 focalLengthPX opticalCenterPx(2);...
-     0 0 1];
+    0 focalLengthPX opticalCenterPx(2);...
+    0 0 1];
 
- 
+
 %% Hard coded aspect of the scene geometry
 % The eyeRadius is set in the routine eyeModel/__init__.py
-designSceneGeometry.eyeRadius = 12;   % in mm
+eyeRadius = 12;   % in mm
 
 
 %% Variable aspects of scene geometry
@@ -47,8 +47,8 @@ designSceneGeometry.eyeRadius = 12;   % in mm
 % have this scene distance value (50-12) for the Z dimension.
 cameraDepthPositionMM = 50; % in mm
 
-designSceneGeometry.extrinsicTranslationVector = [0; 0; cameraDepthPositionMM - designSceneGeometry.eyeRadius];
-designSceneGeometry.extrinsicRotationMatrix = [1 0 0; 0 -1 0; 0 0 -1];
+extrinsicTranslationVector = [0; 0; cameraDepthPositionMM - eyeRadius];
+extrinsicRotationMatrix = [1 0 0; 0 -1 0; 0 0 -1];
 
 %% Generate a set of gaze targets for the blender model
 
@@ -107,7 +107,7 @@ for ii=1:nFrames
     
     % Define the location of the eye center of rotation in the head-centered
     % coordinate frame
-    pupilCenter = [-designSceneGeometry.eyeRadius 0 0];
+    pupilCenter = [-eyeRadius 0 0];
     
     % Apply the head-fixed rotation to center of the pupil
     pupilCenterCoords = (eyeRotation*pupilCenter')';
@@ -123,7 +123,7 @@ end
 
 %% generate eye movie
 %generateEyeMovie(codeDirectory,exportsDirectory,gazeTargetPositionX, gazeTargetPositionY, gazeTargetPositionZ, pupilRadii, eyeClosedness, cameraDepthPositionMM)
- 
+
 % rename the movie file
 %movefile(fullfile(exportsDirectory,'pupil_movie.avi'),fullfile(exportsDirectory,[pathParams.runName '_gray.avi']));
 
@@ -136,6 +136,8 @@ system(['mv ' exportsDirectory '/reconstructedFrame*png ' renderedFramesDirector
 
 
 %% Run the processing pipeline
+% We force the sceneGeometry model to match the design parameters used by
+% Blender to render the scene.
 runVideoPipeline( pathParams, ...
     'verbosity', 'full', 'useParallel',false, 'catchErrors', false,...
     'pupilFrameMask', [60 60], 'maskBox', [1 1], 'pupilGammaCorrection',0.5, 'pupilRange', [20 80], ...
@@ -145,67 +147,13 @@ runVideoPipeline( pathParams, ...
     'candidateThetas',0:pi/16:2*pi,...
     'badFrameErrorThreshold', 8, ...
     'makeFitVideoByNumber',6,...
-    'skipStageByNumber',1,'lastStage','estimateSceneGeometry');
-
-% Load the pupilData and the sceneGeometry into memory
-load(fullfile(pathParams.dataOutputDirFull,[pathParams.runName '_pupil.mat']));
-load(fullfile(pathParams.dataOutputDirFull,[pathParams.runName '_sceneGeometry.mat']));
-
-%% Test the forward projection model
-
-% Obtain the ellipses found on the image plane
-imagePlaneEllipsesObserved = pupilData.initial.ellipse.values;
-imagePlaneEllipseCentersObserved = imagePlaneEllipsesObserved(:,1:2);
-
-% Open a figure and plot the observed ellipse centers
-figure
-plot(imagePlaneEllipseCentersObserved(:,1),imagePlaneEllipseCentersObserved(:,2),'o','MarkerEdgeColor',[.7 .7 .7],...
-    'MarkerFaceColor',[.7 .7 .7])
-axis equal
-hold on
-
-% Can we invert the Blender model? We test if the rendered ellipses can be
-% modeled with the designSceneGeometry within a 1% error on matching ellipse
-% theta, eccentrivity, and error.
-constraintTolerance = 0.01;
-for ii=1:nFrames
-    [eyeParams, projectedEllipsesOnImagePlane(ii,:), centerError(ii), shapeError(ii), areaError(ii)] = ...
-        pupilProjection_inv(imagePlaneEllipsesObserved(ii,:), designSceneGeometry, 'constraintTolerance', constraintTolerance);
-    eyeParamError(ii,:)=eyeParams-[pupilCenterAzimuths(ii), pupilCenterElevations(ii), pupilRadii(ii)];
-    ellipseParamError(ii,:)=projectedEllipsesOnImagePlane(ii,:)-imagePlaneEllipsesObserved(ii,:);
-end
-fprintf('Attempt to model observed image plane ellipses using design-specified sceneGeometry:\n')
-fprintf('\t %d of %d ellipses were fit with < %f error in shape \n',sum(shapeError<constraintTolerance),nFrames,constraintTolerance);
-fprintf('\t Maximum eye azimuth error: %f \n',max(eyeParamError(:,1)));
-fprintf('\t Maximum eye elevation error: %f \n',max(eyeParamError(:,2)));
-fprintf('\t Maximum pupil radius error: %f \n',max(eyeParamError(:,3)));
-fprintf('\t Maximum ellipse center distance error: %f \n',max(centerError));
-fprintf('\t Maximum ellipse area error: %f \n',max(areaError));
-
-% Update the plot with these centers
-plot(projectedEllipsesOnImagePlane(:,1),projectedEllipsesOnImagePlane(:,2),'.r')
-
-% Test again, now with the sceneGeometry found by estimation
-constraintTolerance = 0.01;
-for ii=1:nFrames
-    [eyeParams, projectedEllipsesOnImagePlane(ii,:), centerError(ii), shapeError(ii), areaError(ii)] = ...
-        pupilProjection_inv(imagePlaneEllipsesObserved(ii,:), sceneGeometry, 'constraintTolerance', constraintTolerance);
-    eyeParamError(ii,:)=eyeParams-[pupilCenterAzimuths(ii), pupilCenterElevations(ii), pupilRadii(ii)];
-    ellipseParamError(ii,:)=projectedEllipsesOnImagePlane(ii,:)-imagePlaneEllipsesObserved(ii,:);
-end
-fprintf('Attempt to model observed image plane ellipses using estimated sceneGeometry:\n')
-fprintf('\t %d of %d ellipses were fit with < %f error in shape \n',sum(shapeError<constraintTolerance),nFrames,constraintTolerance);
-fprintf('\t Maximum eye azimuth error: %f \n',max(eyeParamError(:,1)));
-fprintf('\t Maximum eye elevation error: %f \n',max(eyeParamError(:,2)));
-fprintf('\t Maximum pupil radius error: %f \n',max(eyeParamError(:,3)));
-fprintf('\t Maximum ellipse center distance error: %f \n',max(centerError));
-fprintf('\t Maximum ellipse area error: %f \n',max(areaError));
-
-
-% Update the plot with these centers
-plot(projectedEllipsesOnImagePlane(:,1),projectedEllipsesOnImagePlane(:,2),'.g')
-legend({'observed ellipse centers','modeled with design sceneGeometry','modeled with adjusted sceneGeometry'})
-hold off
-
-
-
+    'skipStageByNumber',[1 9 10],...
+    'intrinsicCameraMatrix',intrinsicCameraMatrix,...
+    'extrinsicRotationMatrix',extrinsicRotationMatrix,...
+    'extrinsicTranslationVector',extrinsicTranslationVector,...
+    'extrinsicTranslationVectorLB',extrinsicTranslationVector,...
+    'extrinsicTranslationVectorUB',extrinsicTranslationVector,...
+    'eyeRadius',eyeRadius,...
+    'eyeRadiusLB',eyeRadius,...
+    'eyeRadiusUB',eyeRadius...
+    );
