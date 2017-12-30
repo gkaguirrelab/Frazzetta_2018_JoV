@@ -26,7 +26,7 @@ end
 sceneResolutionPx = [640 480];
 opticalCenterPx = (sceneResolutionPx./2);
 focalLengthPX = (sceneResolutionPx(1)/2.0) / tan(45*pi/180 / 2);
-sceneGeometry.intrinsicCameraMatrix = ...
+designSceneGeometry.intrinsicCameraMatrix = ...
     [focalLengthPX 0 opticalCenterPx(1);...
      0 focalLengthPX opticalCenterPx(2);...
      0 0 1];
@@ -34,7 +34,7 @@ sceneGeometry.intrinsicCameraMatrix = ...
  
 %% Hard coded aspect of the scene geometry
 % The eyeRadius is set in the routine eyeModel/__init__.py
-sceneGeometry.eyeRadius = 12;   % in mm
+designSceneGeometry.eyeRadius = 12;   % in mm
 
 
 %% Variable aspects of scene geometry
@@ -47,8 +47,8 @@ sceneGeometry.eyeRadius = 12;   % in mm
 % have this scene distance value (50-12) for the Z dimension.
 cameraDepthPositionMM = 50; % in mm
 
-sceneGeometry.extrinsicTranslationVector = [0; 0; cameraDepthPositionMM - sceneGeometry.eyeRadius];
-sceneGeometry.extrinsicRotationMatrix = [1 0 0; 0 -1 0; 0 0 -1];
+designSceneGeometry.extrinsicTranslationVector = [0; 0; cameraDepthPositionMM - designSceneGeometry.eyeRadius];
+designSceneGeometry.extrinsicRotationMatrix = [1 0 0; 0 -1 0; 0 0 -1];
 
 %% Generate a set of gaze targets for the blender model
 
@@ -107,7 +107,7 @@ for ii=1:nFrames
     
     % Define the location of the eye center of rotation in the head-centered
     % coordinate frame
-    pupilCenter = [-sceneGeometry.eyeRadius 0 0];
+    pupilCenter = [-designSceneGeometry.eyeRadius 0 0];
     
     % Apply the head-fixed rotation to center of the pupil
     pupilCenterCoords = (eyeRotation*pupilCenter')';
@@ -122,10 +122,10 @@ end
 
 
 %% generate eye movie
-generateEyeMovie(codeDirectory,exportsDirectory,gazeTargetPositionX, gazeTargetPositionY, gazeTargetPositionZ, pupilRadii, eyeClosedness, cameraDepthPositionMM)
+%generateEyeMovie(codeDirectory,exportsDirectory,gazeTargetPositionX, gazeTargetPositionY, gazeTargetPositionZ, pupilRadii, eyeClosedness, cameraDepthPositionMM)
  
 % rename the movie file
-movefile(fullfile(exportsDirectory,'pupil_movie.avi'),fullfile(exportsDirectory,[pathParams.runName '_gray.avi']));
+%movefile(fullfile(exportsDirectory,'pupil_movie.avi'),fullfile(exportsDirectory,[pathParams.runName '_gray.avi']));
 
 % move the rendered frames into a sub-directory
 renderedFramesDirectory = '~/Desktop/Blender_Simulate01/renderedFrames';
@@ -145,17 +145,16 @@ runVideoPipeline( pathParams, ...
     'candidateThetas',0:pi/16:2*pi,...
     'badFrameErrorThreshold', 8, ...
     'makeFitVideoByNumber',6,...
-    'skipStageByNumber',1,'lastStage','fitPupilPerimeter');
+    'skipStageByNumber',1,'lastStage','estimateSceneGeometry');
 
-% Load the result files into memory
+% Load the pupilData and the sceneGeometry into memory
 load(fullfile(pathParams.dataOutputDirFull,[pathParams.runName '_pupil.mat']));
-
-
+load(fullfile(pathParams.dataOutputDirFull,[pathParams.runName '_sceneGeometry.mat']));
 
 %% Test the forward projection model
 
 % Obtain the ellipses found on the image plane
-imagePlaneEllipsesObserved = pupilData.ellipseParamsUnconstrained_mean;
+imagePlaneEllipsesObserved = pupilData.initial.ellipse.values;
 imagePlaneEllipseCentersObserved = imagePlaneEllipsesObserved(:,1:2);
 
 % Open a figure and plot the observed ellipse centers
@@ -166,12 +165,12 @@ axis equal
 hold on
 
 % Can we invert the Blender model? We test if the rendered ellipses can be
-% modeled with the sceneGeometry within a 1% error on matching ellipse
+% modeled with the designSceneGeometry within a 1% error on matching ellipse
 % theta, eccentrivity, and error.
 constraintTolerance = 0.01;
 for ii=1:nFrames
     [eyeParams, projectedEllipsesOnImagePlane(ii,:), centerError(ii), shapeError(ii), areaError(ii)] = ...
-        pupilProjection_inv(imagePlaneEllipsesObserved(ii,:), sceneGeometry, 'constraintTolerance', constraintTolerance);
+        pupilProjection_inv(imagePlaneEllipsesObserved(ii,:), designSceneGeometry, 'constraintTolerance', constraintTolerance);
     eyeParamError(ii,:)=eyeParams-[pupilCenterAzimuths(ii), pupilCenterElevations(ii), pupilRadii(ii)];
     ellipseParamError(ii,:)=projectedEllipsesOnImagePlane(ii,:)-imagePlaneEllipsesObserved(ii,:);
 end
@@ -186,19 +185,15 @@ fprintf('\t Maximum ellipse area error: %f \n',max(areaError));
 % Update the plot with these centers
 plot(projectedEllipsesOnImagePlane(:,1),projectedEllipsesOnImagePlane(:,2),'.r')
 
-% Search across sceneGeometry parameters to improve the fit to Blender
-[adjustedSceneGeometry, distanceError] = findExtrinsicTranslationVector(imagePlaneEllipsesObserved, sceneGeometry);
-
-% Can we invert the Blender model? Test again, now with the adjusted scene
-% geometry
+% Test again, now with the sceneGeometry found by estimation
 constraintTolerance = 0.01;
 for ii=1:nFrames
     [eyeParams, projectedEllipsesOnImagePlane(ii,:), centerError(ii), shapeError(ii), areaError(ii)] = ...
-        pupilProjection_inv(imagePlaneEllipsesObserved(ii,:), adjustedSceneGeometry, 'constraintTolerance', constraintTolerance);
+        pupilProjection_inv(imagePlaneEllipsesObserved(ii,:), sceneGeometry, 'constraintTolerance', constraintTolerance);
     eyeParamError(ii,:)=eyeParams-[pupilCenterAzimuths(ii), pupilCenterElevations(ii), pupilRadii(ii)];
     ellipseParamError(ii,:)=projectedEllipsesOnImagePlane(ii,:)-imagePlaneEllipsesObserved(ii,:);
 end
-fprintf('Attempt to model observed image plane ellipses using adjusted sceneGeometry:\n')
+fprintf('Attempt to model observed image plane ellipses using estimated sceneGeometry:\n')
 fprintf('\t %d of %d ellipses were fit with < %f error in shape \n',sum(shapeError<constraintTolerance),nFrames,constraintTolerance);
 fprintf('\t Maximum eye azimuth error: %f \n',max(eyeParamError(:,1)));
 fprintf('\t Maximum eye elevation error: %f \n',max(eyeParamError(:,2)));
