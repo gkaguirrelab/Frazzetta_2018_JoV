@@ -100,8 +100,8 @@ extrinsicTranslationVector = [0; 0; cameraDepthPositionMM - eyeRadius];
 
 % We define the gaze target in terms of head-fixed azimuth and elevation
 % rotations.
-aziSweeps = [-25:25:25];
-eleSteps = [-15:15:15];
+aziSweeps = [-25:5:25];
+eleSteps = [-15:5:15];
 
 pupilCenterAzimuths=[];
 pupilCenterElevations=[];
@@ -172,10 +172,10 @@ end
 
 
 %% generate eye movie
-%generateEyeMovie(codeDirectory,exportsDirectory,gazeTargetPositionX, gazeTargetPositionY, gazeTargetPositionZ, pupilRadii, eyeClosedness, cameraDepthPositionMM)
+generateEyeMovie(codeDirectory,exportsDirectory,gazeTargetPositionX, gazeTargetPositionY, gazeTargetPositionZ, pupilRadii, eyeClosedness, cameraDepthPositionMM)
 
 % rename the movie file
-%movefile(fullfile(exportsDirectory,'pupil_movie.avi'),fullfile(exportsDirectory,[pathParams.runName '_gray.avi']));
+movefile(fullfile(exportsDirectory,'pupil_movie.avi'),fullfile(exportsDirectory,[pathParams.runName '_gray.avi']));
 
 % move the rendered frames into a sub-directory
 renderedFramesDirectory = '~/Desktop/Blender_Simulate01/renderedFrames';
