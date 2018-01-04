@@ -1,17 +1,59 @@
-% DEMO generate eye movie
+% Blender_Simulate01
+% Create a video of a simulated eye and recover the input parameters
+%
+% Description:
+%   This simulation makes use of the Blender eye model for the generation
+%   of ground-truth data introduced by Lech ?wirski and Neil A. Dodgson:
+%       http://www.cl.cam.ac.uk/research/rainbow/projects/eyerender/
+%
+%   We create a video with the eye posed at different azimuths and
+%   elevations. We then determine how well we can recover these parameters
+%   of the eye from an analysis of the resulting video. For this
+%   simulation, we aim to place the camera (and the IR light source)
+%   exactly on the line that connects the center of rotation of the eye
+%   with the center of the pupil when the eye is in primary position
+%   (Azimuth = 0; Elevation = 0).
+%
+%   If fully succesful, we would be able to specify the sceneGeometry
+%   parameters given only the settings used for the Blender movie
+%   synthesis. Using these parameters, we would be able to perfectly fit
+%   the image of the pupil in the video and recover the "ground truth"
+%   rotation of the eye and pupil radius. In practice, we face the
+%   following limitations:
+%     - Our knowledge of the parameters of the Blender movie generation is
+%       incomplete. As evidence of this, the image that results for an
+%       ostensible azimuth = 0; elevation = 0 is slightly off from primary
+%       gaze. We find that applying small adjustments to the X and Y gaze
+%       targets can be used to center the pupil, but we are uncertain as to
+%       why this is necessary.
+%     - Our forward model of the pupil projection is imperfect. Two 
+%       examples:
+%        1) The Blender eye incorporates a model of the cornea that
+%           has some refractive index. This causes a change in the appearance
+%           of the "entrance pupil" of the eye in the image plane. Our model
+%           does not include this distortion of the size and shape of the pupil
+%           image, and thus cannot perfectly model the Blender data at far
+%           rotations of the eye.
+%        2) The appearance of the pupil on the image plane deviates from an
+%           ellipse and becomes more egg-shaped for far rotations. Our
+%           model will imerfectly capture this shape and recover the
+%           eyeParams.
+%   
 
+%% Housekeeping
 close all
 clear all
+
 
 %% Set paths and file names
 % This path should be defined in the eyeModelSupport local hook
 codeDirectory = '~/Documents/MATLAB/toolboxes/eyemodelSupport/code';
 
 % Where to save the results of our simulation
-exportsDirectory = '~/Desktop/Blender_Simulate01';
+exportsDirectory = '~/Desktop/Simulate01_AzimuthElevationSweeps';
 pathParams.dataOutputDirFull = fullfile(exportsDirectory);
 pathParams.dataSourceDirFull = fullfile(exportsDirectory);
-pathParams.runName = 'Simulate01';
+pathParams.runName = 'Simulate01_AzimuthElevationSweeps';
 videoName = fullfile(exportsDirectory, [pathParams.runName '_gray.avi']);
 
 % check or make a directory for output
@@ -20,7 +62,7 @@ if exist(exportsDirectory,'dir')==0
 end
 
 
-%% Hard coded properties of the Blender camera
+%% Hard coded properties of the camera
 % The focal length is set in the routine eyeModel/__init__.py
 % All intrinsic camera values are in units of pixels
 sceneResolutionPx = [640 480];
@@ -35,7 +77,11 @@ intrinsicCameraMatrix = ...
 
 %% Hard coded aspect of the scene geometry
 % The eyeRadius is set in the routine eyeModel/__init__.py
-eyeRadius = 12.5;   % in mm
+% While it is specified as 12.0 in the Blender scene, we find that a value
+% of 12.15 best fits the data. This may be because there is magnification
+% of the pupil image by the cornea that we are not modeling.
+eyeRadius = 12.15;   % in mm
+extrinsicRotationMatrix = [1 0 0; 0 -1 0; 0 0 -1];
 
 
 %% Variable aspects of scene geometry
@@ -47,9 +93,8 @@ eyeRadius = 12.5;   % in mm
 % it to be the case that the extrinsicTranslationVector is estimated to
 % have this scene distance value (50-12) for the Z dimension.
 cameraDepthPositionMM = 50; % in mm
+extrinsicTranslationVector = [0; 0; cameraDepthPositionMM - eyeRadius];
 
-extrinsicTranslationVector = [0; 0; cameraDepthPositionMM - eyeRadius + 0.5];
-extrinsicRotationMatrix = [1 0 0; 0 -1 0; 0 0 -1];
 
 %% Generate a set of gaze targets for the blender model
 
@@ -68,7 +113,6 @@ for ii = 1: length(eleSteps)
         pupilCenterAzimuths = [pupilCenterAzimuths fliplr(aziSweeps)];
     end
 end
-
 nFrames = length(pupilCenterAzimuths);
 
 % The eye is posed in the Blender model by defining the location in XYZ
@@ -114,6 +158,11 @@ for ii=1:nFrames
     pupilCenterCoords = (eyeRotation*pupilCenter')';
     
     % Arrange the dimensions and signs to corresponds to the Blender model
+    % We find that a shift in the X and Y position of the gaze target is
+    % needed to place the center of the pupil in line with the center of
+    % rotation of the eye when azimuth, elevation = 0. We have been unable
+    % to determine what aspect of the Blender model produces this
+    % imperfection.
     gazeTargetPositionX(ii) = pupilCenterCoords(2)*-1+0.05;
     gazeTargetPositionY(ii) = pupilCenterCoords(3)-0.15;
     gazeTargetPositionZ(ii) = pupilCenterCoords(1);
@@ -148,15 +197,52 @@ runVideoPipeline( pathParams, ...
     'candidateThetas',0:pi/16:2*pi,...
     'badFrameErrorThreshold', 8, ...
     'makeFitVideoByNumber',6,...
-    'skipStageByNumber',1:6,...
+    'skipStageByNumber',1,...
     'intrinsicCameraMatrix',intrinsicCameraMatrix,...
     'radialDistortionVector',radialDistortionVector,...
     'extrinsicRotationMatrix',extrinsicRotationMatrix,...
     'extrinsicTranslationVector',extrinsicTranslationVector,...
-    'extrinsicTranslationVectorLB',[0;0;37],...
-    'extrinsicTranslationVectorUB',[0;0;39],...
+    'extrinsicTranslationVectorLB',extrinsicTranslationVector,...
+    'extrinsicTranslationVectorUB',extrinsicTranslationVector,...
     'constraintTolerance',0.03,...
     'eyeRadius',eyeRadius,...
-    'eyeRadiusLB',12,...
-    'eyeRadiusUB',13 ...
+    'eyeRadiusLB',eyeRadius,...
+    'eyeRadiusUB',eyeRadius ...
     );
+
+
+%% Generate result plots
+
+% Load the pupilData into memory
+load(fullfile(pathParams.dataOutputDirFull,[pathParams.runName '_pupil.mat']));
+
+figure
+subplot(1,3,1)
+plot(pupilCenterAzimuths,pupilData.radiusSmoothed.eyeParams.values(:,1), '.r')
+rl = refline(1,0);
+rl.Color = 'k';
+xlabel('Ground Truth Pupil Azimuth in degrees')
+ylabel('Reconstructed Pupil Azimuth in degrees')
+ylim([-40 40]);
+xlim([-40 40]);
+axis square
+
+subplot(1,3,2)
+plot(pupilCenterElevations,pupilData.radiusSmoothed.eyeParams.values(:,2), '.r')
+rl = refline(1,0);
+rl.Color = 'k';
+xlabel('Ground Truth Pupil Elevation in degrees')
+ylabel('Reconstructed Pupil Elevation in degrees')
+ylim([-30 30]);
+xlim([-30 30]);
+axis square
+
+subplot(1,3,3)
+plot(pupilData.radiusSmoothed.eyeParams.values(:,3), '.r');
+hold on
+plot(pupilRadii, '-k');
+ylabel('pupil radius reconstructed [mm]');
+ylim([2 3]);
+axis square
+hold off
+
